@@ -86,3 +86,33 @@ demonstrate the benefits of shadow ioeventfd, see
 [ioregionfd](./ioregionfd.md) for more information.
 
 
+DMA region access backend
+-------------------------
+
+[dma-region-access](../samples/dma-region-access.c) demonstrates how a server
+can register a custom DMA region access backend by calling
+`vfu_setup_device_dma_region_access()`. The example maps each guest DMA region
+to a host buffer and serves direct mapping (`vfu_sgl_get`/`vfu_sgl_put`) and
+message DMA (`vfu_sgl_read`/`vfu_sgl_write`) through backend callbacks.
+
+This sample does not open a vfio-pci device. Instead, it shows exactly where
+vfio-pci BAR mapping logic would plug in: in the region-access resolver and
+the per-region backend callbacks.
+
+Start the server:
+
+```
+rm -f /tmp/vfio-user-dma-access.sock
+build/samples/dma-region-access -v /tmp/vfio-user-dma-access.sock
+```
+
+Run the existing sample client against it:
+
+```
+build/samples/client /tmp/vfio-user-dma-access.sock
+```
+
+When DMA map requests arrive, the sample logs backend registration and release
+events for each mapped region.
+
+

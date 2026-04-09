@@ -116,3 +116,43 @@ When DMA map requests arrive, the sample logs backend registration and release
 events for each mapped region.
 
 
+Minimal vfio-pci BAR read/write
+-------------------------------
+
+[vfio-pci-bar-rw][vfio-pci-bar-rw-src] provides a minimal host-side example
+that opens a real vfio-pci device, resolves one BAR region via
+`VFIO_DEVICE_GET_REGION_INFO`, and performs a read and optional write through
+the VFIO device file descriptor.
+
+This sample is intentionally simple: it targets one BAR and one offset, and it
+does not create or use any vfio-user context.
+
+Usage:
+
+```
+sudo build/samples/vfio-pci-bar-rw <iommu-group> <bdf> <bar-index> <offset>
+```
+
+Example (read only):
+
+```
+sudo build/samples/vfio-pci-bar-rw 37 0000:5e:00.0 2 0x0
+```
+
+Example (write then read back):
+
+```
+sudo build/samples/vfio-pci-bar-rw 37 0000:5e:00.0 2 0x0 0x00000001
+```
+
+Notes:
+
+- The target device must be bound to `vfio-pci`.
+- Running this writes to real hardware registers. Only write values your
+  device documentation declares safe.
+- The BAR index is the VFIO region index for the target BAR.
+
+
+<!-- References -->
+
+[vfio-pci-bar-rw-src]: ../samples/vfio-pci-bar-rw.c

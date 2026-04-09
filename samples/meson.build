@@ -128,3 +128,21 @@ shadow_ioeventfd_server = executable(
     include_directories: lib_include_dir,
     install: false,
 )
+
+
+vfio_pci_bar_rw_sources = [
+    'vfio-pci-bar-rw.c',
+]
+
+vfio_pci_bar_rw_deps = [
+    libvfio_user_dep,
+]
+
+vfio_pci_bar_rw = executable(
+    'vfio-pci-bar-rw',
+    vfio_pci_bar_rw_sources,
+    c_args: common_cflags,
+    dependencies: vfio_pci_bar_rw_deps,
+    include_directories: lib_include_dir,
+    install: false,
+)

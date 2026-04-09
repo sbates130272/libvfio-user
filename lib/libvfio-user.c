@@ -676,6 +676,9 @@ int
 handle_dma_map(vfu_ctx_t *vfu_ctx, vfu_msg_t *msg,
                struct vfio_user_dma_map *dma_map)
 {
+    const vfu_dma_region_access_ops_t *region_access_ops = NULL;
+    void *region_access_private = NULL;
+    vfu_dma_info_t dma_info = { 0 };
     char rstr[1024];
     int fd = -1;
     int ret;
@@ -722,10 +725,26 @@ handle_dma_map(vfu_ctx_t *vfu_ctx, vfu_msg_t *msg,
         }
     }
 
+    if (vfu_ctx->dma_register_region_access != NULL) {
+        dma_info.iova.iov_base = (void *)(uintptr_t)dma_map->addr;
+        dma_info.iova.iov_len = dma_map->size;
+        dma_info.page_size = getpagesize();
+        dma_info.prot = prot;
+
+        ret = vfu_ctx->dma_register_region_access(vfu_ctx, &dma_info, prot,
+                                                  &region_access_ops,
+                                                  &region_access_private);
+        if (ret < 0) {
+            close_safely(&fd);
+            return -1;
+        }
+    }
+
     ret = dma_controller_add_region(vfu_ctx->dma,
                                     (vfu_dma_addr_t)(uintptr_t)dma_map->addr,
                                     dma_map->size, fd, dma_map->offset,
-                                    prot);
+                                    prot, region_access_ops,
+                                    region_access_private);
     if (ret < 0) {
         vfu_log(vfu_ctx, LOG_ERR, "failed to add DMA region %s: %m", rstr);
         close_safely(&fd);
@@ -2141,6 +2160,21 @@ vfu_setup_device_dma(vfu_ctx_t *vfu_ctx, vfu_dma_register_cb_t *dma_register,
 }
 
 EXPORT int
+vfu_setup_device_dma_region_access(vfu_ctx_t *vfu_ctx,
+    vfu_dma_register_region_access_cb_t *register_region_access)
+{
+    assert(vfu_ctx != NULL);
+
+    if (vfu_ctx->dma == NULL) {
+        return ERROR_INT(EINVAL);
+    }
+
+    vfu_ctx->dma_register_region_access = register_region_access;
+
+    return 0;
+}
+
+EXPORT int
 vfu_setup_device_nr_irqs(vfu_ctx_t *vfu_ctx, enum vfu_dev_irq_type type,
                          uint32_t count)
 {
@@ -2259,7 +2293,7 @@ vfu_sgl_mark_dirty(vfu_ctx_t *vfu_ctx, dma_sg_t *sgl, size_t cnt)
 
 EXPORT void
 vfu_sgl_put(vfu_ctx_t *vfu_ctx, dma_sg_t *sgl,
-            struct iovec *iov UNUSED, size_t cnt)
+            struct iovec *iov, size_t cnt)
 {
 #ifdef DEBUG
     if (unlikely(vfu_ctx->dma_unregister == NULL)) {
@@ -2269,7 +2303,7 @@ vfu_sgl_put(vfu_ctx_t *vfu_ctx, dma_sg_t *sgl,
     quiesce_check_allowed(vfu_ctx, __func__);
 #endif
 
-    return dma_sgl_put(vfu_ctx->dma, sgl, cnt);
+    return dma_sgl_put(vfu_ctx->dma, sgl, iov, cnt);
 }
 
 static int
@@ -2369,35 +2403,91 @@ vfu_dma_transfer(vfu_ctx_t *vfu_ctx, enum vfio_user_command cmd,
     return 0;
 }
 
+static dma_memory_region_t *
+dma_get_region(vfu_ctx_t *vfu_ctx, dma_sg_t *sg)
+{
+    if (vfu_ctx->dma == NULL || sg->region < 0 || sg->region >= vfu_ctx->dma->nregions) {
+        return NULL;
+    }
+
+    return &vfu_ctx->dma->regions[sg->region];
+}
+
 EXPORT int
 vfu_sgl_read(vfu_ctx_t *vfu_ctx, dma_sg_t *sgl, size_t cnt, void *data)
 {
+    size_t i;
+    size_t offset;
+
     assert(vfu_ctx->pending.state == VFU_CTX_PENDING_NONE);
 
-    /* Not currently implemented. */
-    if (cnt != 1) {
-        return ERROR_INT(ENOTSUP);
+    offset = 0;
+    for (i = 0; i < cnt; i++) {
+        dma_memory_region_t *region;
+        int ret;
+
+        region = dma_get_region(vfu_ctx, &sgl[i]);
+
+        if (region->ops != NULL && region->ops->read_sg != NULL) {
+            ret = region->ops->read_sg(vfu_ctx, &sgl[i], data + offset,
+                                       region->ops_private);
+            if (ret < 0) {
+                return ret;
+            }
+        } else {
+            ret = vfu_dma_transfer(vfu_ctx, VFIO_USER_DMA_READ, &sgl[i],
+                                   data + offset);
+            if (ret < 0) {
+                return ret;
+            }
+        }
+        offset += sgl[i].length;
     }
 
-    return vfu_dma_transfer(vfu_ctx, VFIO_USER_DMA_READ, sgl, data);
+    return 0;
 }
 
 EXPORT int
 vfu_sgl_write(vfu_ctx_t *vfu_ctx, dma_sg_t *sgl, size_t cnt, void *data)
 {
+    size_t i;
+    size_t offset;
+
     assert(vfu_ctx->pending.state == VFU_CTX_PENDING_NONE);
 
-    /* Not currently implemented. */
-    if (cnt != 1) {
-        return ERROR_INT(ENOTSUP);
+    offset = 0;
+    for (i = 0; i < cnt; i++) {
+        dma_memory_region_t *region;
+        int ret;
+
+        region = dma_get_region(vfu_ctx, &sgl[i]);
+
+        if (region->ops != NULL && region->ops->write_sg != NULL) {
+            ret = region->ops->write_sg(vfu_ctx, &sgl[i], data + offset,
+                                        region->ops_private);
+            if (ret < 0) {
+                return ret;
+            }
+        } else {
+            ret = vfu_dma_transfer(vfu_ctx, VFIO_USER_DMA_WRITE, &sgl[i],
+                                   data + offset);
+            if (ret < 0) {
+                return ret;
+            }
+        }
+        offset += sgl[i].length;
     }
 
-    return vfu_dma_transfer(vfu_ctx, VFIO_USER_DMA_WRITE, sgl, data);
+    return 0;
 }
 
 EXPORT bool
 vfu_sg_is_mappable(vfu_ctx_t *vfu_ctx, dma_sg_t *sg)
 {
+    if (vfu_ctx->dma == NULL) {
+        return false;
+    }
+
     return dma_sg_is_mappable(vfu_ctx->dma, sg);
 }
 

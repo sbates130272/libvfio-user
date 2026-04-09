@@ -51,7 +51,23 @@ dma_sg_size(void)
 
 bool
 dma_sg_is_mappable(const dma_controller_t *dma, const dma_sg_t *sg) {
-    return sg->region[dma->regions].info.vaddr != NULL;
+    const dma_memory_region_t *region;
+
+    assert(dma != NULL);
+    assert(sg != NULL);
+
+    if (sg->region < 0 || sg->region >= dma->nregions) {
+        return false;
+    }
+
+    region = &dma->regions[sg->region];
+    if (region->ops != NULL && region->ops->is_sg_mappable != NULL) {
+        return region->ops->is_sg_mappable(dma->vfu_ctx,
+                                           (dma_sg_t *)sg,
+                                           region->ops_private);
+    }
+
+    return region->info.vaddr != NULL;
 }
 
 static inline ssize_t
@@ -167,6 +183,11 @@ MOCK_DEFINE(dma_controller_remove_region)(dma_controller_t *dma,
             dma->vfu_ctx->in_cb = CB_NONE;
         }
 
+        if (region->ops != NULL && region->ops->release != NULL) {
+            region->ops->release(dma->vfu_ctx, &region->info,
+                                 region->ops_private);
+        }
+
         if (region->info.vaddr != NULL) {
             dma_controller_unmap_region(dma, region);
         } else {
@@ -201,6 +222,11 @@ dma_controller_remove_all_regions(dma_controller_t *dma,
             dma->vfu_ctx->in_cb = CB_DMA_UNREGISTER;
             dma_unregister(data, &region->info);
             dma->vfu_ctx->in_cb = CB_NONE;
+        }
+
+        if (region->ops != NULL && region->ops->release != NULL) {
+            region->ops->release(dma->vfu_ctx, &region->info,
+                                 region->ops_private);
         }
 
         if (region->info.vaddr != NULL) {
@@ -275,7 +301,9 @@ dirty_page_logging_start_on_region(dma_memory_region_t *region, size_t pgsize)
 int
 MOCK_DEFINE(dma_controller_add_region)(dma_controller_t *dma,
                                        vfu_dma_addr_t dma_addr, uint64_t size,
-                                       int fd, off_t offset, uint32_t prot)
+                                       int fd, off_t offset, uint32_t prot,
+                                       const vfu_dma_region_access_ops_t *ops,
+                                       void *ops_private)
 {
     dma_memory_region_t *region;
     int page_size = 0;
@@ -361,6 +389,8 @@ MOCK_DEFINE(dma_controller_add_region)(dma_controller_t *dma,
     region->info.prot = prot;
     region->offset = offset;
     region->fd = fd;
+    region->ops = ops;
+    region->ops_private = ops_private;
 
     if (fd != -1) {
         int ret;

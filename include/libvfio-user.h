@@ -514,6 +514,58 @@ typedef void (vfu_dma_register_cb_t)(vfu_ctx_t *vfu_ctx, vfu_dma_info_t *info);
  */
 typedef void (vfu_dma_unregister_cb_t)(vfu_ctx_t *vfu_ctx, vfu_dma_info_t *info);
 
+/*
+ * Optional backend hooks for DMA regions. A backend can provide direct mappings
+ * and transfer methods for regions that are not backed by the client-shared fd.
+ */
+typedef struct vfu_dma_region_access_ops {
+    /*
+     * Return true if the SG entry is directly mappable via map_sg().
+     */
+    bool (*is_sg_mappable)(vfu_ctx_t *vfu_ctx, dma_sg_t *sg, void *private);
+    /*
+     * Map an SG entry into this process, populating @iov.
+     *
+     * Returns 0 on success, -1 on error setting errno.
+     */
+    int (*map_sg)(vfu_ctx_t *vfu_ctx, dma_sg_t *sg, struct iovec *iov,
+                  void *private);
+    /*
+     * Unmap a previously mapped SG entry.
+     */
+    void (*unmap_sg)(vfu_ctx_t *vfu_ctx, dma_sg_t *sg, struct iovec *iov,
+                     void *private);
+    /*
+     * Read from the range represented by @sg into @data.
+     *
+     * Returns 0 on success, -1 on error setting errno.
+     */
+    int (*read_sg)(vfu_ctx_t *vfu_ctx, dma_sg_t *sg, void *data, void *private);
+    /*
+     * Write @data to the range represented by @sg.
+     *
+     * Returns 0 on success, -1 on error setting errno.
+     */
+    int (*write_sg)(vfu_ctx_t *vfu_ctx, dma_sg_t *sg, const void *data,
+                    void *private);
+    /*
+     * Release backend-private state associated with @info.
+     */
+    void (*release)(vfu_ctx_t *vfu_ctx, vfu_dma_info_t *info, void *private);
+} vfu_dma_region_access_ops_t;
+
+/*
+ * Callback used to select a DMA access backend for a mapped guest DMA region.
+ *
+ * Returning 0 with @ops set to non-NULL installs that backend for the region.
+ * Returning 0 with @ops set to NULL keeps the default libvfio-user behavior.
+ *
+ * @private, if set by the callback, is passed back to all backend ops.
+ */
+typedef int (vfu_dma_register_region_access_cb_t)(
+    vfu_ctx_t *vfu_ctx, vfu_dma_info_t *info, uint32_t prot,
+    const vfu_dma_region_access_ops_t **ops, void **private);
+
 /**
  * Set up device DMA registration callbacks. When libvfio-user is notified of a
  * DMA range addition or removal, these callbacks will be invoked.
@@ -532,6 +584,23 @@ typedef void (vfu_dma_unregister_cb_t)(vfu_ctx_t *vfu_ctx, vfu_dma_info_t *info)
 int
 vfu_setup_device_dma(vfu_ctx_t *vfu_ctx, vfu_dma_register_cb_t *dma_register,
                      vfu_dma_unregister_cb_t *dma_unregister);
+
+/**
+ * Set up optional DMA region access backend selection.
+ *
+ * If provided, this callback is consulted for every newly mapped DMA region to
+ * determine whether accesses for that region should be handled by a custom
+ * backend (for example, a vfio-pci mapped aperture) instead of the default
+ * behavior.
+ *
+ * @vfu_ctx: the libvfio-user context
+ * @register_region_access: region access resolver callback (optional)
+ *
+ * @returns 0 on success, -1 on error. Sets errno.
+ */
+int
+vfu_setup_device_dma_region_access(vfu_ctx_t *vfu_ctx,
+    vfu_dma_register_region_access_cb_t *register_region_access);
 
 enum vfu_dev_irq_type {
     VFU_DEV_INTX_IRQ,

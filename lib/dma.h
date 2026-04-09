@@ -97,6 +97,8 @@ typedef struct {
     int fd;                     // File descriptor to mmap
     off_t offset;               // File offset
     uint8_t *dirty_bitmap;         // Dirty page bitmap
+    const vfu_dma_region_access_ops_t *ops;
+    void *ops_private;
 } dma_memory_region_t;
 
 typedef struct dma_controller {
@@ -126,7 +128,8 @@ dma_controller_destroy(dma_controller_t *dma);
  */
 MOCK_DECLARE(int, dma_controller_add_region, dma_controller_t *dma,
              vfu_dma_addr_t dma_addr, uint64_t size, int fd, off_t offset,
-             uint32_t prot);
+             uint32_t prot, const vfu_dma_region_access_ops_t *ops,
+             void *ops_private);
 
 MOCK_DECLARE(int, dma_controller_remove_region, dma_controller_t *dma,
              vfu_dma_addr_t dma_addr, size_t size,
@@ -271,6 +274,7 @@ dma_sgl_get(dma_controller_t *dma, dma_sg_t *sgl, struct iovec *iov, size_t cnt)
 {
     dma_memory_region_t *region;
     dma_sg_t *sg;
+    int ret;
 
     assert(dma != NULL);
     assert(sgl != NULL);
@@ -285,8 +289,18 @@ dma_sgl_get(dma_controller_t *dma, dma_sg_t *sgl, struct iovec *iov, size_t cnt)
         }
         region = &dma->regions[sg->region];
 
-        if (region->info.vaddr == NULL) {
-            return ERROR_INT(EFAULT);
+        if (region->ops != NULL && region->ops->map_sg != NULL) {
+            ret = region->ops->map_sg(dma->vfu_ctx, sg, iov, region->ops_private);
+            if (ret < 0) {
+                return ret;
+            }
+        } else {
+            if (region->info.vaddr == NULL) {
+                return ERROR_INT(EFAULT);
+            }
+
+            iov->iov_base = region->info.vaddr + sg->offset;
+            iov->iov_len = sg->length;
         }
 
 #ifdef DEBUG_SGL
@@ -295,9 +309,6 @@ dma_sgl_get(dma_controller_t *dma, dma_sg_t *sgl, struct iovec *iov, size_t cnt)
                 sg->dma_addr + sg->offset + sg->length);
 
 #endif
-
-        iov->iov_base = region->info.vaddr + sg->offset;
-        iov->iov_len = sg->length;
 
         sg++;
         iov++;
@@ -342,7 +353,7 @@ dma_sgl_mark_dirty(dma_controller_t *dma, dma_sg_t *sgl, size_t cnt)
 }
 
 static inline void
-dma_sgl_put(dma_controller_t *dma, dma_sg_t *sgl, size_t cnt)
+dma_sgl_put(dma_controller_t *dma, dma_sg_t *sgl, struct iovec *iov, size_t cnt)
 {
     dma_memory_region_t *region;
     dma_sg_t *sg;
@@ -360,6 +371,10 @@ dma_sgl_put(dma_controller_t *dma, dma_sg_t *sgl, size_t cnt)
 
         region = &dma->regions[sg->region];
 
+        if (region->ops != NULL && region->ops->unmap_sg != NULL) {
+            region->ops->unmap_sg(dma->vfu_ctx, sg, iov, region->ops_private);
+        }
+
         if (sg->writeable) {
             if (dma->dirty_pgsize > 0) {
                 _dma_mark_dirty(dma, region, sg);
@@ -373,6 +388,7 @@ dma_sgl_put(dma_controller_t *dma, dma_sg_t *sgl, size_t cnt)
 #endif
 
         sg++;
+        iov++;
     } while (--cnt > 0);
 }
 

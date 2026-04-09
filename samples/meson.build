@@ -94,6 +94,24 @@ lspci = executable(
 )
 
 
+dma_region_access_sources = [
+    'dma-region-access.c',
+]
+
+dma_region_access_deps = [
+    libvfio_user_dep,
+]
+
+dma_region_access = executable(
+    'dma-region-access',
+    dma_region_access_sources,
+    c_args: common_cflags,
+    dependencies: dma_region_access_deps,
+    include_directories: lib_include_dir,
+    install: false,
+)
+
+
 shadow_ioeventfd_server_sources = [
     'shadow_ioeventfd_server.c',
 ]
@@ -107,6 +125,24 @@ shadow_ioeventfd_server = executable(
     shadow_ioeventfd_server_sources,
     c_args: common_cflags,
     dependencies: shadow_ioeventfd_server_deps,
+    include_directories: lib_include_dir,
+    install: false,
+)
+
+
+vfio_pci_bar_rw_sources = [
+    'vfio-pci-bar-rw.c',
+]
+
+vfio_pci_bar_rw_deps = [
+    libvfio_user_dep,
+]
+
+vfio_pci_bar_rw = executable(
+    'vfio-pci-bar-rw',
+    vfio_pci_bar_rw_sources,
+    c_args: common_cflags,
+    dependencies: vfio_pci_bar_rw_deps,
     include_directories: lib_include_dir,
     install: false,
 )

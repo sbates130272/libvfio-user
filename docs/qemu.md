@@ -72,3 +72,51 @@ gpio: region2: read 0 from (0:1)
 gpio: region2: wrote 0x1 to (0:1)
 gpio: region2: read 0 from (0:1)
 ```
+
+QEMU changes for DMA region access backends
+-------------------------------------------
+
+The new `vfu_setup_device_dma_region_access()` API is server-side only. QEMU
+does not need to understand this API directly, but it does need to provide DMA
+map/unmap behavior that lets the server select the backend path for the right
+ranges.
+
+At a high level, QEMU should be updated as follows:
+
+1. Define backend-target DMA address ranges
+   - Reserve one or more IOVA windows for memory that should be served by a
+     custom backend (for example, memory exposed by a vfio-pci BAR mapping).
+   - Keep these ranges disjoint from normal guest RAM ranges that already use
+     standard `VFIO_USER_DMA_MAP` handling.
+
+2. Emit `VFIO_USER_DMA_MAP`/`VFIO_USER_DMA_UNMAP` for those ranges
+   - Ensure the vfio-user client side in QEMU sends map and unmap events for
+     backend-target ranges at the same lifecycle points used for guest RAM
+     ranges (creation, invalidation, reset, and teardown).
+   - Preserve protection bits so the server can enforce write permissions in
+     backend callbacks.
+
+3. Carry enough information for backend selection
+   - Today, backend routing can be done by server policy over IOVA ranges
+     (as shown in `samples/dma-region-access.c`).
+   - For production use, QEMU and the server should agree on a stable contract
+     for identifying backend-target ranges. A protocol capability or map
+     metadata extension is cleaner than relying only on implicit IOVA windows.
+
+4. Handle migration and dirty tracking ownership explicitly
+   - If writes are executed in the server backend path, define whether QEMU or
+     the backend is the source of truth for dirty accounting for those ranges.
+   - Ensure stop-and-copy and precopy transitions keep map state and dirtiness
+     semantics consistent.
+
+5. Add end-to-end coverage in QEMU tests
+   - Add tests that verify QEMU issues map/unmap for backend-target ranges.
+   - Add functional coverage for DMA reads/writes hitting backend-target
+     ranges and for teardown/reset behavior.
+
+Notes:
+
+- This repository currently documents and tests with QEMU 10.1.1 or later.
+- See [memory mapping notes](./memory-mapping.md) for current DMA semantics.
+- See [backend sample](../samples/dma-region-access.c) for a concrete resolver
+  and callback implementation.

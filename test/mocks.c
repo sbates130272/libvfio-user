@@ -114,11 +114,13 @@ unpatch_all(void)
 int
 dma_controller_add_region(dma_controller_t *dma, void *dma_addr,
                           uint64_t size, int fd, off_t offset,
-                          uint32_t prot)
+                          uint32_t prot,
+                          const vfu_dma_region_access_ops_t *ops,
+                          void *ops_private)
 {
     if (!is_patched("dma_controller_add_region")) {
         return __real_dma_controller_add_region(dma, dma_addr, size, fd, offset,
-                                                prot);
+                                                prot, ops, ops_private);
     }
 
     check_expected_ptr(dma);
@@ -127,6 +129,8 @@ dma_controller_add_region(dma_controller_t *dma, void *dma_addr,
     check_expected(fd);
     check_expected(offset);
     check_expected(prot);
+    check_expected(ops);
+    check_expected(ops_private);
     errno = mock();
     return mock();
 }

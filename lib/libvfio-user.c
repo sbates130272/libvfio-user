@@ -2311,6 +2311,63 @@ vfu_setup_device_quiesce_cb(vfu_ctx_t *vfu_ctx, vfu_device_quiesce_cb_t *quiesce
 }
 
 EXPORT int
+vfu_mmio_write(vfu_ctx_t *vfu_ctx, uint64_t gpa, const void *data, size_t size)
+{
+    struct vfio_user_dma_region_access *req;
+    struct vfio_user_dma_region_access  reply = { 0 };
+    static int msg_id = 1;
+    size_t req_size;
+    int ret;
+
+    assert(vfu_ctx != NULL);
+    assert(data != NULL);
+
+    if (size == 0 || size > vfu_ctx->client_max_data_xfer_size) {
+        return ERROR_INT(EINVAL);
+    }
+
+    req_size = sizeof(*req) + size;
+    req = calloc(1, req_size);
+    if (req == NULL) {
+        return ERROR_INT(ENOMEM);
+    }
+
+    req->addr  = gpa;
+    req->count = size;
+    memcpy(req->data, data, size);
+
+    ret = vfu_ctx->tran->send_msg(vfu_ctx, msg_id++,
+                                  VFIO_USER_DMA_WRITE,
+                                  req, req_size,
+                                  NULL,
+                                  &reply, sizeof(reply));
+    free(req);
+
+    if (ret < 0) {
+        int err = errno;
+        if (err == ENOMSG || err == ECONNRESET) {
+            if (vfu_reset_ctx(vfu_ctx, err) < 0) {
+                vfu_log(vfu_ctx, LOG_WARNING,
+                        "vfu_mmio_write: failed to reset context: %m");
+            }
+            return ERROR_INT(ENOTCONN);
+        }
+        return ERROR_INT(err);
+    }
+
+    if (reply.addr != gpa || reply.count != size) {
+        vfu_log(vfu_ctx, LOG_ERR,
+                "vfu_mmio_write: bad reply: req gpa=%#lx count=%zu "
+                "reply addr=%#lx count=%llu",
+                (unsigned long)gpa, size,
+                (unsigned long)reply.addr, (unsigned long long)reply.count);
+        return ERROR_INT(EINVAL);
+    }
+
+    return 0;
+}
+
+EXPORT int
 vfu_setup_host_doorbell_cb(vfu_ctx_t *vfu_ctx, vfu_host_doorbell_cb_t cb)
 {
     assert(vfu_ctx != NULL);

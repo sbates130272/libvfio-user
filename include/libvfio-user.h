@@ -1005,6 +1005,32 @@ int
 vfu_create_ioeventfd(vfu_ctx_t *vfu_ctx, uint32_t region_idx, int fd,
                      size_t gpa_offset, uint32_t size, uint32_t flags,
                      uint64_t datamatch, int shadow_fd, size_t shadow_offset);
+
+/**
+ * vfu_mmio_write - write to a QEMU-owned MMIO GPA without DMA registration.
+ *
+ * Unlike vfu_sgl_write(), this function does not require the target GPA to be
+ * in the server's DMA address space (i.e., registered via a prior DMA_MAP).
+ * It sends a VFIO_USER_DMA_WRITE message directly, and the QEMU client
+ * dispatches the write through address_space_memory — reaching both guest RAM
+ * and MMIO IO-ops handlers (device BAR registers, doorbells, etc.).
+ *
+ * @vfu_ctx: the server context
+ * @gpa:     guest physical address to write to
+ * @data:    pointer to the bytes to write
+ * @size:    number of bytes to write (1/2/4/8 recommended for MMIO alignment)
+ *
+ * Returns 0 on success, -1 with errno set on failure.
+ *
+ * Note: this function issues a synchronous request and waits for a reply.
+ * Do not call from within a vfu_run_ctx() callback if the client may
+ * simultaneously send a command back — that risks a single-socket deadlock
+ * (see libvfio-user issue #279).
+ */
+int
+vfu_mmio_write(vfu_ctx_t *vfu_ctx, uint64_t gpa, const void *data,
+               size_t size);
+
 #ifdef __cplusplus
 }
 #endif

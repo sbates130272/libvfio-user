@@ -146,12 +146,44 @@ a device model registers via `memory_region_add_eventfd()` with
 Only `match_data = true` doorbells are forwarded; wildcard ioeventfds
 (`match_data = false`) are not, because they do not carry a fixed write value.
 
+## `vfu_mmio_write` — DMA_WRITE to any GPA without registration
+
+`vfu_mmio_write(ctx, gpa, data, size)` sends a `VFIO_USER_DMA_WRITE` message
+for an arbitrary guest physical address without requiring that GPA to be
+registered in the server's DMA address table.  On the QEMU client side,
+`vfio_user_dma_write()` dispatches the write via `address_space_write(
+&address_space_memory, ...)`, which correctly reaches:
+
+- Guest RAM GPAs — written into backing memory.
+- MMIO GPAs — dispatched to the device's IO-ops `.write` handler.
+- Unassigned / ROM GPAs — silently discarded (`ENODEV` reply).
+
+```c
+/* Write 1 byte (value 0xFA) to pci-testdev's BAR0 MMIO doorbell */
+uint8_t val = 0xFA;
+int ret = vfu_mmio_write(ctx, 0xfebe5000, &val, sizeof(val));
+if (ret < 0) {
+    perror("vfu_mmio_write");
+}
+```
+
+**Cost:** one socket round-trip per call (synchronous request + reply).
+Use `vfu_mmio_write` for infrequent or setup-time MMIO writes.  For
+high-frequency doorbells, prefer `HOST_DOORBELL_FD` (eventfd, kernel-only)
+or the pci-mmio-bridge ring (memcpy, ~1–10 µs with eventfd kick).
+
+**Deadlock note:** `vfu_mmio_write` blocks waiting for a reply.  Do not
+call it from within a `vfu_run_ctx()` callback if the client might
+simultaneously send a `REGION_READ` or similar command back — this risks a
+single-socket deadlock (see issue #279).
+
 ## Comparison with related mechanisms
 
 | Mechanism | Direction | Per-write cost | Requirement |
 |---|---|---|---|
 | `REGION_WRITE` socket message | server → QEMU | 1 socket round-trip | Always available |
-| `DMA_WRITE` (guest RAM) | server → QEMU → guest RAM | 1 socket round-trip | GPA must be in DMA space |
+| `vfu_mmio_write` (DMA_WRITE) | server → QEMU → any GPA | 1 socket round-trip | No registration needed |
+| `DMA_WRITE` (guest RAM via `vfu_sgl_write`) | server → QEMU → guest RAM | 1 socket round-trip | GPA must be in DMA space |
 | Peer memfd BAR (`vfu_sgl_get`) | peer → target directly | 0 (memcpy) | Target BAR must be memfd-backed |
 | **Host doorbell fd** (this doc) | server → QEMU MMIO | 1 eventfd write (kernel-only) | Device must use `memory_region_add_eventfd()` |
 | pci-mmio-bridge ring | server → QEMU ring → any MMIO | 1 memcpy + poll delay | Requires bridge device in guest |

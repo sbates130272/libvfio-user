@@ -170,6 +170,7 @@ struct vfu_ctx {
     vfu_reset_cb_t          *reset;
     vfu_dma_register_cb_t   *dma_register;
     vfu_dma_unregister_cb_t *dma_unregister;
+    vfu_host_doorbell_cb_t  host_doorbell_cb;
 
     int                     client_max_fds;
     size_t                  client_max_data_xfer_size;

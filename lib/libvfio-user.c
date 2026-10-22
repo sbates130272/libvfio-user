@@ -1121,6 +1121,54 @@ handle_dma_device_feature_set(vfu_ctx_t *vfu_ctx, uint32_t feature,
     return 0;
 }
 
+/*
+ * Handle VFIO_USER_HOST_DOORBELL_FD: client pushes an eventfd for a
+ * QEMU-owned MMIO doorbell.  Extract the fd from ancillary data and invoke
+ * the registered callback so the server can store and later ring it.
+ */
+static int
+handle_host_doorbell_fd(vfu_ctx_t *vfu_ctx, vfu_msg_t *msg)
+{
+    vfio_user_host_doorbell_fd_t *db;
+    int fd;
+
+    assert(vfu_ctx != NULL);
+    assert(msg != NULL);
+
+    if (msg->in.iov.iov_len < sizeof(*db)) {
+        vfu_log(vfu_ctx, LOG_ERR,
+                "HOST_DOORBELL_FD: short payload (%zu < %zu)",
+                msg->in.iov.iov_len, sizeof(*db));
+        return ERROR_INT(EINVAL);
+    }
+    if (msg->in.nr_fds != 1) {
+        vfu_log(vfu_ctx, LOG_ERR,
+                "HOST_DOORBELL_FD: expected 1 fd, got %zu", msg->in.nr_fds);
+        return ERROR_INT(EINVAL);
+    }
+
+    db = msg->in.iov.iov_base;
+    fd = consume_fd(msg->in.fds, msg->in.nr_fds, 0);
+    if (fd < 0) {
+        return ERROR_INT(EBADF);
+    }
+
+    vfu_log(vfu_ctx, LOG_DEBUG,
+            "HOST_DOORBELL_FD: gpa=0x%lx datamatch=0x%lx size=%u fd=%d",
+            (unsigned long)db->gpa, (unsigned long)db->datamatch,
+            db->size, fd);
+
+    if (vfu_ctx->host_doorbell_cb != NULL) {
+        vfu_ctx->host_doorbell_cb(vfu_ctx, db->gpa, db->datamatch,
+                                  db->size, fd);
+    } else {
+        vfu_log(vfu_ctx, LOG_WARNING,
+                "HOST_DOORBELL_FD: no callback registered, closing fd %d", fd);
+        close(fd);
+    }
+    return 0;
+}
+
 static int
 handle_device_feature(vfu_ctx_t *vfu_ctx, vfu_msg_t *msg)
 {
@@ -1399,6 +1447,10 @@ handle_request(vfu_ctx_t *vfu_ctx, vfu_msg_t *msg)
 
     case VFIO_USER_MIG_DATA_WRITE:
         ret = handle_mig_data_write(vfu_ctx, msg);
+        break;
+
+    case VFIO_USER_HOST_DOORBELL_FD:
+        ret = handle_host_doorbell_fd(vfu_ctx, msg);
         break;
 
     default:
@@ -2256,6 +2308,14 @@ vfu_setup_device_quiesce_cb(vfu_ctx_t *vfu_ctx, vfu_device_quiesce_cb_t *quiesce
 {
     assert(vfu_ctx != NULL);
     vfu_ctx->quiesce = quiesce;
+}
+
+EXPORT int
+vfu_setup_host_doorbell_cb(vfu_ctx_t *vfu_ctx, vfu_host_doorbell_cb_t cb)
+{
+    assert(vfu_ctx != NULL);
+    vfu_ctx->host_doorbell_cb = cb;
+    return 0;
 }
 
 EXPORT int

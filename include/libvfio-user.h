@@ -1003,6 +1003,35 @@ int
 vfu_create_ioeventfd(vfu_ctx_t *vfu_ctx, uint32_t region_idx, int fd,
                      size_t gpa_offset, uint32_t size, uint32_t flags,
                      uint64_t datamatch, int shadow_fd, size_t shadow_offset);
+
+/**
+ * vfu_host_doorbell_cb_t - callback invoked when the client pushes a host
+ * doorbell eventfd (VFIO_USER_HOST_DOORBELL_FD).
+ *
+ * @vfu_ctx:    the server context
+ * @gpa:        guest physical address of the MMIO doorbell
+ * @datamatch:  value the client will write to @gpa when the fd is rung
+ * @size:       access width in bytes (1/2/4/8)
+ * @fd:         the eventfd — write to it to trigger the MMIO write in QEMU.
+ *              The callee takes ownership; close it when done.
+ */
+typedef void (*vfu_host_doorbell_cb_t)(vfu_ctx_t *vfu_ctx, uint64_t gpa,
+                                       uint64_t datamatch, uint32_t size,
+                                       int fd);
+
+/**
+ * vfu_setup_host_doorbell_cb - register the host doorbell callback.
+ *
+ * Must be called before vfu_realize_ctx().  When the client sends a
+ * VFIO_USER_HOST_DOORBELL_FD message the registered callback is invoked with
+ * the doorbell parameters and an eventfd.  Ring the fd to trigger QEMU to
+ * execute the corresponding MMIO write without a per-write socket round-trip.
+ *
+ * Returns 0 on success, -1 and sets errno on failure.
+ */
+int
+vfu_setup_host_doorbell_cb(vfu_ctx_t *vfu_ctx, vfu_host_doorbell_cb_t cb);
+
 #ifdef __cplusplus
 }
 #endif

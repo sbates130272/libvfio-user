@@ -72,6 +72,12 @@ enum vfio_user_command {
     VFIO_USER_DEVICE_FEATURE            = 16,
     VFIO_USER_MIG_DATA_READ             = 17,
     VFIO_USER_MIG_DATA_WRITE            = 18,
+    /*
+     * Client (QEMU) pushes an eventfd to the server so the server can ring
+     * QEMU-owned MMIO doorbells without a per-write socket round-trip.
+     * Direction: client → server, NO_REPLY.  One fd via SCM_RIGHTS.
+     */
+    VFIO_USER_HOST_DOORBELL_FD          = 19,
     VFIO_USER_MAX,
 };
 
@@ -206,6 +212,21 @@ typedef struct vfio_user_region_io_fds_reply {
         struct vfio_user_sub_region_ioregionfd ioregionfd;
     } sub_regions[];
 } __attribute__((packed)) vfio_user_region_io_fds_reply_t;
+
+/*
+ * VFIO_USER_HOST_DOORBELL_FD payload.
+ *
+ * Sent by the client (QEMU) to push an eventfd for a QEMU-owned MMIO
+ * doorbell.  The server writes to the fd (one eventfd_write()) to trigger
+ * QEMU to execute:  address_space_write(gpa, datamatch, size).
+ * One fd is carried as SCM_RIGHTS ancillary data on the same sendmsg().
+ */
+typedef struct vfio_user_host_doorbell_fd {
+    uint64_t    gpa;        /* doorbell guest physical address */
+    uint64_t    datamatch;  /* value QEMU will write to that GPA */
+    uint32_t    size;       /* access width in bytes (1/2/4/8) */
+    uint32_t    flags;      /* reserved, must be 0 */
+} __attribute__((packed)) vfio_user_host_doorbell_fd_t;
 
 /* Analogous to struct vfio_device_feature_dma_logging_range */
 struct vfio_user_device_feature_dma_logging_range {

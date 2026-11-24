@@ -149,6 +149,7 @@ VFU_TRANS_PIPE = 1
 VFU_TRANS_MAX = 2
 
 LIBVFIO_USER_FLAG_ATTACH_NB = (1 << 0)
+LIBVFIO_USER_FLAG_RUN_CTX_NB = (1 << 1)
 VFU_DEV_TYPE_PCI = 0
 
 LIBVFIO_USER_MAJOR = 0
@@ -774,9 +775,9 @@ def eventfd(initval=0, flags=0):
     return libc.eventfd(initval, flags)
 
 
-def connect_sock():
+def connect_sock(sock_path=SOCK_PATH):
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.connect(SOCK_PATH)
+    sock.connect(sock_path)
     return sock
 
 
@@ -787,8 +788,8 @@ class Client:
         self.sock = sock
         self.client_cmd_socket = None
 
-    def connect(self, ctx, capabilities={}):
-        self.sock = connect_sock()
+    def connect(self, ctx, capabilities={}, sock_path=SOCK_PATH):
+        self.sock = connect_sock(sock_path)
 
         client_caps = {
             "capabilities": {
